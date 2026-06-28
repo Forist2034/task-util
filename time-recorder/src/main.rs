@@ -1,4 +1,4 @@
-use std::{io::Write, os::unix::fs::OpenOptionsExt, path::PathBuf};
+use std::{borrow::Cow, io::Write, os::unix::fs::OpenOptionsExt, path::PathBuf};
 
 use anyhow::Context;
 use chrono::{DateTime, Datelike, FixedOffset};
@@ -64,6 +64,16 @@ enum Cmd {
         params: Vec<String>,
     },
 }
+
+#[derive(serde::Serialize)]
+struct TimewData<'a> {
+    id: u8,
+    start: String,
+    end: String,
+    tags: Vec<Cow<'a, str>>,
+    annotation: &'a str,
+}
+
 #[derive(clap::Parser)]
 struct Cli {
     #[command(subcommand)]
@@ -118,31 +128,45 @@ fn stop(stop_time: &Option<String>, task: &str, params: &[String]) -> anyhow::Re
     }
     let info: TaskData = serde_json::from_slice(&data.stdout).context("invalid task data")?;
 
-    let status = std::process::Command::new("timew")
-        .arg("track")
-        .arg(
-            start
+    let timew_data = {
+        let mut id_buf = [0; uuid::fmt::Hyphenated::LENGTH];
+        serde_json::to_vec(std::slice::from_ref(&TimewData {
+            id: 0,
+            start: start
                 .start_time
                 .to_utc()
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        )
-        .arg("-")
-        .arg(
-            stop_time
+            end: stop_time
                 .to_utc()
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-        )
-        .arg(info.description)
-        .args([
-            format!("uuid:{}", start.id),
-            format!("task:{}", info.task_name),
-            format!("task_id:{}", info.task_id),
-        ])
-        .args(info.categories.iter())
-        .args(info.tags.iter())
-        .args(info.timew_tags)
-        .status()
+            tags: {
+                let mut ret = Vec::from([
+                    Cow::Borrowed(info.description),
+                    format!("task:{}", info.task_name).into(),
+                    format!("task_id:{}", info.task_id).into(),
+                ]);
+                ret.extend(info.categories.iter().map(|c| Cow::Borrowed(*c)));
+                ret.extend(info.tags.iter().map(|t| Cow::Borrowed(*t)));
+                ret.extend(info.timew_tags.iter().map(|t| Cow::Borrowed(*t)));
+                ret
+            },
+            annotation: start.id.as_hyphenated().encode_lower(&mut id_buf),
+        }))
+        .unwrap()
+    };
+
+    let mut timew = std::process::Command::new("timew")
+        .arg("import")
+        .stdin(std::process::Stdio::piped())
+        .spawn()
         .context("failed to track info to timew")?;
+    timew
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(&timew_data)
+        .context("failed to write timew input")?;
+    let status = timew.wait().context("failed to wait timew")?;
     if !status.success() {
         anyhow::bail!("timewarrior returns {status:?}");
     }
