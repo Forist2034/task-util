@@ -7,14 +7,14 @@ use serde::{Deserialize, Serialize, ser::SerializeMap};
 use uuid::Uuid;
 
 #[derive(Deserialize)]
-struct TaskData<'a> {
+struct TaskData {
     task_id: Uuid,
-    task_name: &'a str,
-    description: &'a str,
-    categories: Vec<&'a str>,
+    task_name: String,
+    description: String,
+    categories: Vec<String>,
     /// task specific tags
-    tags: Vec<&'a str>,
-    timew_tags: Vec<&'a str>,
+    tags: Vec<String>,
+    timew_tags: Vec<String>,
     value: serde_json::Value,
 }
 
@@ -48,8 +48,8 @@ struct Record<'a> {
     start_time: DateTime<FixedOffset>,
     stop_time: DateTime<FixedOffset>,
     description: &'a str,
-    categories: Vec<&'a str>,
-    tags: Vec<&'a str>,
+    categories: &'a [String],
+    tags: &'a [String],
     data: RecordData<'a>,
 }
 
@@ -141,13 +141,13 @@ fn stop(stop_time: &Option<String>, task: &str, params: &[String]) -> anyhow::Re
                 .to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
             tags: {
                 let mut ret = Vec::from([
-                    Cow::Borrowed(info.description),
+                    Cow::Borrowed(info.description.as_str()),
                     format!("task:{}", info.task_name).into(),
                     format!("task_id:{}", info.task_id).into(),
                 ]);
-                ret.extend(info.categories.iter().map(|c| Cow::Borrowed(*c)));
-                ret.extend(info.tags.iter().map(|t| Cow::Borrowed(*t)));
-                ret.extend(info.timew_tags.iter().map(|t| Cow::Borrowed(*t)));
+                ret.extend(info.categories.iter().map(|c| Cow::Borrowed(c.as_str())));
+                ret.extend(info.tags.iter().map(|t| Cow::Borrowed(t.as_str())));
+                ret.extend(info.timew_tags.iter().map(|t| Cow::Borrowed(t.as_str())));
                 ret
             },
             annotation: start.id.as_hyphenated().encode_lower(&mut id_buf),
@@ -192,12 +192,12 @@ fn stop(stop_time: &Option<String>, task: &str, params: &[String]) -> anyhow::Re
                 id: start.id,
                 start_time: start.start_time,
                 stop_time,
-                description: info.description,
-                categories: info.categories,
-                tags: info.tags,
+                description: &info.description,
+                categories: &info.categories,
+                tags: &info.tags,
                 data: RecordData(RecordDataValue {
                     task_id: info.task_id,
-                    task_name: info.task_name,
+                    task_name: &info.task_name,
                     value: info.value,
                 }),
             })
