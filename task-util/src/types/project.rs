@@ -18,7 +18,14 @@ pub struct ProjectInfo {
     pub id: Uuid,
     pub name: String,
     pub created: DateTime<FixedOffset>,
+    #[serde(default)]
     pub data: serde_json::Value,
     #[serde(default)]
     pub external_tools: ExternalTools,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ProjectDef {
+    pub project: ProjectInfo,
+    pub tasks: Vec<super::task::Task>,
 }

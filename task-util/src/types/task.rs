@@ -13,7 +13,7 @@ pub struct ExternalTools {
     pub timewarrior: Option<Timewarrior>,
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     #[default]

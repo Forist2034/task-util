@@ -4,5 +4,9 @@ pub mod types {
     pub mod task;
     pub mod time;
 }
+pub mod ext_tools {
+    pub mod taskwarrior;
+    pub mod timewarrior;
+}
 
 pub mod native;

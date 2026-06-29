@@ -6,6 +6,17 @@ use rustix::fs::{Mode, OFlags};
 
 #[derive(clap::Subcommand)]
 enum Cmd {
+    AddProject {
+        #[arg(long)]
+        update: bool,
+        project: String,
+    },
+    AddTask {
+        #[arg(long)]
+        update: bool,
+        project: String,
+        task: String,
+    },
     Start {
         task: String,
     },
@@ -47,9 +58,13 @@ fn main() -> anyhow::Result<()> {
             .context("failed to parse config file")?;
     let mut native = task_util::native::App::new(cfg_root.as_fd(), &cfg.native)
         .context("failed to init native app")?;
+    let mut taskw = task_util::ext_tools::taskwarrior::Taskwarrior::new();
     match cli.cmd {
         Cmd::Start { task } => {
-            let (_task, _start) = native.start_task(&task).context("failed to start task")?;
+            let (task, start) = native.start_task(&task).context("failed to start task")?;
+            taskw
+                .start_task(&task, start)
+                .context("failed to start task for taskwarrior")?;
             Ok(())
         }
         Cmd::Stop {
@@ -58,7 +73,7 @@ fn main() -> anyhow::Result<()> {
             done,
             params,
         } => {
-            let _rec = native
+            let rec = native
                 .stop_task(
                     &task,
                     done,
@@ -72,7 +87,35 @@ fn main() -> anyhow::Result<()> {
                     &params,
                 )
                 .context("failed to stop task")?;
+            task_util::ext_tools::timewarrior::import_record(&rec)
+                .context("failed to import record to time warrior")?;
+            if done {
+                taskw.finish_task(&rec.task)
+            } else {
+                taskw.stop_task(&rec.task)
+            }
+            .context("failed to stop taskwarrior task")?;
             Ok(())
+        }
+        Cmd::AddProject { update: _, project } => {
+            let proj = native
+                .read_project(&project)
+                .context("failed to read project")?;
+            taskw
+                .add_tasks(&proj.tasks)
+                .context("failed to add tasks to taskwarrior")
+        }
+        Cmd::AddTask {
+            update: _,
+            project,
+            task,
+        } => {
+            let (_idx, task) = native
+                .read_project_task(&project, &task)
+                .context("failed to read project task")?;
+            taskw
+                .add_tasks(std::slice::from_ref(&task))
+                .context("failed to add project task to taskwarrior")
         }
     }
 }

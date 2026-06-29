@@ -12,10 +12,12 @@ use rustix::fs::{AtFlags, Mode, OFlags};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::types::task::Status;
+
 fn eval_nickel<T: serde::de::DeserializeOwned>(
     file: &str,
     field: Option<&str>,
-    args: Option<&[impl AsRef<OsStr>]>,
+    args: &[impl AsRef<OsStr>],
 ) -> anyhow::Result<T> {
     let mut cmd = std::process::Command::new("nickel");
     cmd.args(["export", "--format", "json"]);
@@ -23,9 +25,9 @@ fn eval_nickel<T: serde::de::DeserializeOwned>(
         cmd.args(["--field", f]);
     }
     cmd.arg(file);
-    if let Some(a) = args {
+    if !args.is_empty() {
         cmd.arg("--");
-        cmd.args(a);
+        cmd.args(args);
     }
     let out = cmd
         .stdin(std::process::Stdio::null())
@@ -42,7 +44,7 @@ fn eval_nickel<T: serde::de::DeserializeOwned>(
 }
 fn read_json<T: serde::de::DeserializeOwned>(
     root: Option<BorrowedFd>,
-    path: &CStr,
+    path: impl rustix::path::Arg,
     buf: &mut Vec<u8>,
 ) -> anyhow::Result<T> {
     buf.clear();
@@ -72,35 +74,42 @@ fn create_dir_all(root: BorrowedFd<'_>, path: &Path) -> Result<(), rustix::io::E
         e => e,
     }
 }
+struct WriteOptions {
+    overwrite: bool,
+    create_dir: bool,
+    mode: Mode,
+}
+impl WriteOptions {
+    const DEFAULT: Self = Self {
+        overwrite: false,
+        create_dir: false,
+        mode: Mode::from_raw_mode(0o440),
+    };
+}
 fn write_json(
     root: Option<BorrowedFd>,
-    path: &CStr,
-    create_dir: bool,
+    path: impl rustix::path::Arg + Copy,
+    opts: WriteOptions,
     buf: &mut Vec<u8>,
     val: &impl serde::Serialize,
 ) -> anyhow::Result<()> {
     buf.clear();
     serde_json::to_writer_pretty(&mut *buf, val).unwrap();
     let dirfd = root.unwrap_or(rustix::fs::CWD);
-    let mut file = match rustix::fs::openat(
-        dirfd,
-        path,
-        OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
-        Mode::from_raw_mode(0o440),
-    ) {
+    let flags = if opts.overwrite {
+        OFlags::CREATE | OFlags::TRUNC | OFlags::WRONLY | OFlags::CLOEXEC
+    } else {
+        OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC
+    };
+    let mut file = match rustix::fs::openat(dirfd, path, flags, opts.mode) {
         Ok(r) => std::fs::File::from(r),
-        Err(e @ rustix::io::Errno::NOENT) if create_dir => {
-            match std::path::Path::new(path.to_str().unwrap()).parent() {
+        Err(e @ rustix::io::Errno::NOENT) if opts.create_dir => {
+            match std::path::Path::new(path.as_str().unwrap()).parent() {
                 Some(p) => {
                     create_dir_all(dirfd, p).context("failed to create parent dir")?;
-                    rustix::fs::openat(
-                        dirfd,
-                        path,
-                        OFlags::CREATE | OFlags::EXCL | OFlags::WRONLY | OFlags::CLOEXEC,
-                        Mode::from_raw_mode(0o440),
-                    )
-                    .context("failed to create output file")?
-                    .into()
+                    rustix::fs::openat(dirfd, path, flags, opts.mode)
+                        .context("failed to create output file")?
+                        .into()
                 }
                 None => return Err(anyhow::Error::new(e).context("failed to create output file")),
             }
@@ -123,6 +132,7 @@ pub struct Config {
     time_log_path: String,
 }
 
+const NO_ARGS: &[&str] = &[];
 pub struct App {
     time_log_root: OwnedFd,
     path_buf: Vec<u8>,
@@ -142,12 +152,41 @@ impl App {
             val_buf: Vec::new(),
         })
     }
+    pub fn read_project(
+        &mut self,
+        project_path: &str,
+    ) -> anyhow::Result<crate::types::project::ProjectDef> {
+        eval_nickel(project_path, None, NO_ARGS)
+    }
+    pub fn read_project_task(
+        &mut self,
+        project_path: &str,
+        task_path: &str,
+    ) -> anyhow::Result<(usize, crate::types::task::Task)> {
+        let proj = self
+            .read_project(project_path)
+            .context("failed to eval project definition")?;
+        let task: crate::types::task::Task = eval_nickel(task_path, Some("task"), NO_ARGS)
+            .context("failed to eval task definition")?;
+        let idx = proj
+            .tasks
+            .iter()
+            .enumerate()
+            .find(|(_, v)| v.id == task.id)
+            .context("task is not in project")?
+            .0;
+        Ok((idx, task))
+    }
+
     pub fn start_task(
         &mut self,
         def: &str,
     ) -> anyhow::Result<(crate::types::task::Task, DateTime<FixedOffset>)> {
-        let task =
-            eval_nickel(def, Some("task"), None::<&[&str]>).context("failed to eval task")?;
+        let task: crate::types::task::Task =
+            eval_nickel(def, Some("task"), NO_ARGS).context("failed to eval task")?;
+        if task.status != Status::Pending {
+            anyhow::bail!("only pending task can be started");
+        }
         let ts = SystemTime::now();
         let start_time = chrono::DateTime::<chrono::Local>::from(ts).fixed_offset();
         let id = uuid::Uuid::new_v7({
@@ -157,7 +196,7 @@ impl App {
         write_json(
             Some(self.time_log_root.as_fd()),
             STARTED_TASK_PATH,
-            false,
+            WriteOptions::DEFAULT,
             &mut self.val_buf,
             &StartedTask { id, start_time },
         )
@@ -189,9 +228,12 @@ impl App {
             task: crate::types::task::Task,
             time: crate::types::time::TimeInfo,
         }
-        let time_def: TimeDef =
-            eval_nickel(def, None, Some(args)).context("failed to eval time definition")?;
+        let mut time_def: TimeDef =
+            eval_nickel(def, None, args).context("failed to eval time definition")?;
         if done {
+            time_def.task.status = crate::types::task::Status::Completed;
+            time_def.task.completed = Some(end_time);
+
             self.path_buf.clear();
             self.path_buf.extend_from_slice(
                 std::path::Path::new(def)
@@ -202,7 +244,11 @@ impl App {
             write_json(
                 None,
                 std::ffi::CStr::from_bytes_with_nul(&self.path_buf).unwrap(),
-                false,
+                WriteOptions {
+                    overwrite: true,
+                    create_dir: false,
+                    mode: Mode::RUSR | Mode::WUSR | Mode::RGRP,
+                },
                 &mut self.val_buf,
                 &crate::types::task::TaskState {
                     status: crate::types::task::Status::Completed,
@@ -236,7 +282,10 @@ impl App {
         write_json(
             Some(self.time_log_root.as_fd()),
             std::ffi::CStr::from_bytes_until_nul(&self.path_buf).unwrap(),
-            true,
+            WriteOptions {
+                create_dir: true,
+                ..WriteOptions::DEFAULT
+            },
             &mut self.val_buf,
             &ret,
         )

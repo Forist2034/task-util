@@ -16,5 +16,7 @@ pub struct TagInfo {
     pub name: String,
     pub created: DateTime<FixedOffset>,
     #[serde(default)]
+    pub data: serde_json::Value,
+    #[serde(default)]
     pub external_tools: ExternalTools,
 }
