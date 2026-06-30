@@ -28,6 +28,12 @@ pub struct TaskState {
     pub completed: Option<DateTime<FixedOffset>>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TaskRef {
+    pub id: Uuid,
+    pub name: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: Uuid,
@@ -39,7 +45,6 @@ pub struct Task {
     pub created: DateTime<FixedOffset>,
     #[serde(default)]
     pub completed: Option<DateTime<FixedOffset>>,
-    pub project: super::project::ProjectRef,
     #[serde(default)]
     pub tags: Vec<super::tag::TagRef>,
     #[serde(default)]

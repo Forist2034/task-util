@@ -25,6 +25,7 @@ pub struct TimeRecord {
     pub id: Uuid,
     pub start_time: DateTime<FixedOffset>,
     pub end_time: DateTime<FixedOffset>,
+    pub project: super::project::ProjectInfo,
     pub task: super::task::Task,
     pub done: bool,
     pub data: serde_json::Value,

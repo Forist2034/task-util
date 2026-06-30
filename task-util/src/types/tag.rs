@@ -15,6 +15,7 @@ pub struct TagInfo {
     pub id: Uuid,
     pub name: String,
     pub created: DateTime<FixedOffset>,
+    pub color: String,
     #[serde(default)]
     pub data: serde_json::Value,
     #[serde(default)]

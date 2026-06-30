@@ -5,6 +5,8 @@ pub mod types {
     pub mod time;
 }
 pub mod ext_tools {
+    pub mod ical;
+    pub mod radicale;
     pub mod taskwarrior;
     pub mod timewarrior;
 }

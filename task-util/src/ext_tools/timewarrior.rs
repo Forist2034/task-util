@@ -14,7 +14,10 @@ struct TimewData<'a> {
     annotation: Uuid,
 }
 
-pub fn import_record(t: &crate::types::time::TimeRecord) -> anyhow::Result<()> {
+pub fn import_record(
+    project: &crate::types::project::ProjectInfo,
+    t: &crate::types::time::TimeRecord,
+) -> anyhow::Result<()> {
     let data = {
         serde_json::to_vec(std::slice::from_ref(&TimewData {
             id: 0,
@@ -24,7 +27,7 @@ pub fn import_record(t: &crate::types::time::TimeRecord) -> anyhow::Result<()> {
                 let mut ret = Vec::from([
                     Cow::Borrowed(t.task.name.as_str()),
                     format!("task_id:{}", t.task.id).into(),
-                    format!("project:{}.{}", t.task.project.root, t.task.project.name).into(),
+                    format!("project:{}.{}", project.root, project.name).into(),
                 ]);
                 ret.extend(t.task.tags.iter().map(|t| Cow::Borrowed(t.name.as_str())));
                 ret.extend(

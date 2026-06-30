@@ -62,6 +62,7 @@ struct Task<S> {
 
 fn to_task<'a>(
     id: usize,
+    p: &'a crate::types::project::ProjectInfo,
     t: &'a crate::types::task::Task,
     start: Option<chrono::DateTime<chrono::FixedOffset>>,
 ) -> Task<&'a str> {
@@ -77,7 +78,7 @@ fn to_task<'a>(
         entry: DateTime(t.created.to_utc()),
         start: start.map(|v| DateTime(v.to_utc())),
         end: t.completed.map(|v| DateTime(v.to_utc())),
-        project: format!("{}.{}", t.project.root, t.project.name),
+        project: format!("{}.{}", p.root, p.name),
         tags: t.tags.iter().map(|t| t.name.as_str()).collect(),
     }
 }
@@ -104,27 +105,40 @@ impl Taskwarrior {
             Ok(())
         }
     }
-    pub fn add_tasks(&mut self, tasks: &[crate::types::task::Task]) -> anyhow::Result<()> {
+    pub fn add_tasks(
+        &mut self,
+        project: &crate::types::project::ProjectInfo,
+        tasks: &[crate::types::task::Task],
+    ) -> anyhow::Result<()> {
         self.import_task(
             &tasks
                 .iter()
                 .enumerate()
-                .map(|(idx, t)| to_task(idx, t, None))
+                .map(|(idx, t)| to_task(idx, project, t, None))
                 .collect::<Vec<_>>(),
         )
     }
     pub fn start_task(
         &mut self,
+        project: &crate::types::project::ProjectInfo,
         t: &crate::types::task::Task,
         start: chrono::DateTime<chrono::FixedOffset>,
     ) -> anyhow::Result<()> {
-        self.import_task(&[to_task(0, t, Some(start))])
+        self.import_task(&[to_task(0, project, t, Some(start))])
     }
-    pub fn stop_task(&mut self, t: &crate::types::task::Task) -> anyhow::Result<()> {
+    pub fn stop_task(
+        &mut self,
+        project: &crate::types::project::ProjectInfo,
+        t: &crate::types::task::Task,
+    ) -> anyhow::Result<()> {
         // task with start field set is considered active
-        self.import_task(&[to_task(0, t, None)])
+        self.import_task(&[to_task(0, project, t, None)])
     }
-    pub fn finish_task(&mut self, t: &crate::types::task::Task) -> anyhow::Result<()> {
-        self.import_task(&[to_task(0, t, None)])
+    pub fn finish_task(
+        &mut self,
+        project: &crate::types::project::ProjectInfo,
+        t: &crate::types::task::Task,
+    ) -> anyhow::Result<()> {
+        self.import_task(&[to_task(0, project, t, None)])
     }
 }
