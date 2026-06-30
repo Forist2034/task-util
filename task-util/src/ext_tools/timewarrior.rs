@@ -3,6 +3,8 @@ use std::{borrow::Cow, io::Write};
 use anyhow::Context as _;
 use uuid::Uuid;
 
+use crate::types::{project::ProjectInfo, task::Task};
+
 use super::taskwarrior::DateTime;
 
 #[derive(serde::Serialize)]
@@ -15,9 +17,10 @@ struct TimewData<'a> {
 }
 
 pub fn import_record(
-    project: &crate::types::project::ProjectInfo,
-    t: &crate::types::time::TimeRecord,
+    t: &crate::types::time::TimeRecord<&ProjectInfo, &Task>,
 ) -> anyhow::Result<()> {
+    let project = t.project;
+    let task = t.task;
     let data = {
         serde_json::to_vec(std::slice::from_ref(&TimewData {
             id: 0,
@@ -25,14 +28,13 @@ pub fn import_record(
             end: DateTime(t.end_time.to_utc()),
             tags: {
                 let mut ret = Vec::from([
-                    Cow::Borrowed(t.task.name.as_str()),
-                    format!("task_id:{}", t.task.id).into(),
+                    Cow::Borrowed(task.name.as_str()),
+                    format!("task_id:{}", task.id).into(),
                     format!("project:{}.{}", project.root, project.name).into(),
                 ]);
-                ret.extend(t.task.tags.iter().map(|t| Cow::Borrowed(t.name.as_str())));
+                ret.extend(task.tags.iter().map(|t| Cow::Borrowed(t.name.as_str())));
                 ret.extend(
-                    t.task
-                        .external_tools
+                    task.external_tools
                         .timewarrior
                         .as_ref()
                         .map_or::<&[String], _>(&[], |v| &v.extra_tags)

@@ -15,19 +15,21 @@ enum Cmd {
         #[arg(long)]
         update: bool,
         project: String,
-        task: String,
+        task: usize,
     },
     Start {
         project: String,
-        task: String,
+        task: usize,
     },
     Stop {
         #[arg(long)]
         stop_time: Option<String>,
         #[arg(long)]
         done: bool,
+        #[arg(long)]
+        time_data: Option<String>,
         project: String,
-        task: String,
+        task: usize,
         #[arg(last = true)]
         params: Vec<String>,
     },
@@ -67,54 +69,69 @@ fn main() -> anyhow::Result<()> {
             .context("failed to init radicale")?;
     match cli.cmd {
         Cmd::Start { project, task } => {
-            let started = native
-                .start_task(&project, &task)
-                .context("failed to start task")?;
+            let (proj, _state) = native
+                .read_project(&project)
+                .context("failed to read project")?;
+            let task = proj.tasks.get(task).context("invalid task index")?;
+            let started = native.start_task(task).context("failed to start task")?;
             taskw
-                .start_task(&started.project, &started.task, started.start_time)
+                .start_task(&proj.project, task, started.start_time)
                 .context("failed to start task for taskwarrior")?;
             Ok(())
         }
         Cmd::Stop {
             stop_time,
             project,
-            task,
+            task: task_idx,
+            time_data,
             done,
             params,
         } => {
-            let (idx, rec) = native
+            let (mut proj, mut state) = native
+                .read_project(&project)
+                .context("failed to read project")?;
+            let task = proj.tasks.get_mut(task_idx).context("invalid task index")?;
+            let rec = native
                 .stop_task(
-                    &project,
-                    &task,
-                    done,
-                    match stop_time {
-                        Some(t) => Some(
-                            chrono::DateTime::<chrono::FixedOffset>::parse_from_rfc3339(&t)
-                                .context("invalid stop time")?,
-                        ),
-                        None => None,
+                    &proj.project,
+                    task,
+                    &mut state,
+                    task_util::native::StopTimeOpt {
+                        def_file: time_data.as_ref().map(String::as_str),
+                        args: &params,
+                        done,
+                        task_index: task_idx,
+                        stop_time: match stop_time {
+                            Some(t) => Some(
+                                chrono::DateTime::<chrono::FixedOffset>::parse_from_rfc3339(&t)
+                                    .context("invalid stop time")?,
+                            ),
+                            None => None,
+                        },
                     },
-                    &params,
                 )
                 .context("failed to stop task")?;
-            task_util::ext_tools::timewarrior::import_record(&rec.project, &rec)
+            state
+                .write(&mut native)
+                .context("failed to write project state")?;
+            task_util::ext_tools::timewarrior::import_record(&rec)
                 .context("failed to import record to time warrior")?;
             if done {
                 taskw
-                    .finish_task(&rec.project, &rec.task)
+                    .finish_task(rec.project, rec.task)
                     .context("failed to finish taskwarrior task")?;
                 radicale
-                    .write_task(idx, &rec.project, &rec.task)
+                    .write_task(task_idx, rec.project, rec.task)
                     .context("failed to update radicale task")?;
             } else {
                 taskw
-                    .stop_task(&rec.project, &rec.task)
+                    .stop_task(rec.project, rec.task)
                     .context("failed to stop taskwarrior task")?;
             }
             Ok(())
         }
         Cmd::AddProject { update: _, project } => {
-            let proj = native
+            let (proj, mut state) = native
                 .read_project(&project)
                 .context("failed to read project")?;
             taskw
@@ -122,22 +139,25 @@ fn main() -> anyhow::Result<()> {
                 .context("failed to add tasks to taskwarrior")?;
             radicale
                 .write_project(&proj)
-                .context("failed to write project to radicale")
+                .context("failed to write project to radicale")?;
+            state.write(&mut native).context("failed to save state")
         }
         Cmd::AddTask {
             update: _,
             project,
-            task,
+            task: task_idx,
         } => {
-            let (proj, idx, task) = native
-                .read_project_task(&project, &task)
+            let (proj, mut state) = native
+                .read_project(&project)
                 .context("failed to read project task")?;
+            let task = proj.tasks.get(task_idx).context("invalid task index")?;
             taskw
-                .add_tasks(&proj, std::slice::from_ref(&task))
+                .add_tasks(&proj.project, std::slice::from_ref(task))
                 .context("failed to add project task to taskwarrior")?;
             radicale
-                .write_task(idx, &proj, &task)
-                .context("failed to write task to radicale")
+                .write_task(task_idx, &proj.project, task)
+                .context("failed to write task to radicale")?;
+            state.write(&mut native).context("failed to save state")
         }
     }
 }

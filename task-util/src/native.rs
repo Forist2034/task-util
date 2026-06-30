@@ -1,6 +1,6 @@
 use std::{
     ffi::{CStr, OsStr},
-    io::{Read, Write},
+    io::{Read, Seek, Write},
     os::fd::{AsFd, BorrowedFd, OwnedFd},
     path::Path,
     time::SystemTime,
@@ -14,13 +14,15 @@ use uuid::Uuid;
 
 use crate::types::{
     project::{ProjectDef, ProjectInfo},
-    task::{Status, Task, TaskRef},
+    task::{Status, Task},
+    time::TimeData,
 };
 
 fn eval_nickel<T: serde::de::DeserializeOwned>(
     file: &str,
     field: Option<&str>,
     args: &[impl AsRef<OsStr>],
+    extra_args: &[impl AsRef<OsStr>],
 ) -> anyhow::Result<T> {
     let mut cmd = std::process::Command::new("nickel");
     cmd.args(["export", "--format", "json"]);
@@ -28,9 +30,10 @@ fn eval_nickel<T: serde::de::DeserializeOwned>(
         cmd.args(["--field", f]);
     }
     cmd.arg(file);
-    if !args.is_empty() {
+    if !extra_args.is_empty() || !args.is_empty() {
         cmd.arg("--");
         cmd.args(args);
+        cmd.args(extra_args);
     }
     let out = cmd
         .stdin(std::process::Stdio::null())
@@ -62,7 +65,7 @@ fn read_json<T: serde::de::DeserializeOwned>(
     )
     .read_to_end(buf)
     .context("failed to read file")?;
-    serde_json::from_slice(&buf).context("failed to deserialize file")
+    serde_json::from_slice(buf).context("failed to deserialize file")
 }
 fn create_dir_all(root: BorrowedFd<'_>, path: &Path) -> Result<(), rustix::io::Errno> {
     match rustix::fs::mkdirat(root, path, Mode::from_raw_mode(0o750)) {
@@ -137,13 +140,33 @@ pub struct Config {
 
 #[derive(Debug)]
 pub struct Started {
-    pub project: ProjectInfo,
-    pub index: usize,
-    pub task: Task,
     pub start_time: DateTime<FixedOffset>,
 }
 
+pub struct ProjectHandle {
+    pub state: crate::types::project::ProjectDefState,
+    file: std::fs::File,
+}
+impl ProjectHandle {
+    pub fn write(&mut self, app: &mut App) -> anyhow::Result<()> {
+        app.val_buf.clear();
+        let _ = serde_json::to_writer_pretty(&mut app.val_buf, &self.state);
+        self.file.set_len(0)?;
+        self.file.seek(std::io::SeekFrom::Start(0))?;
+        self.file.write_all(&app.val_buf)?;
+        Ok(())
+    }
+}
+
 const NO_ARGS: &[&str] = &[];
+
+pub struct StopTimeOpt<'a, A> {
+    pub task_index: usize,
+    pub def_file: Option<&'a str>,
+    pub done: bool,
+    pub args: &'a [A],
+    pub stop_time: Option<DateTime<FixedOffset>>,
+}
 pub struct App {
     time_log_root: OwnedFd,
     path_buf: Vec<u8>,
@@ -163,34 +186,43 @@ impl App {
             val_buf: Vec::new(),
         })
     }
-    pub fn read_project<T: serde::de::DeserializeOwned>(
+    pub fn read_project(
         &mut self,
         project_path: &str,
-    ) -> anyhow::Result<crate::types::project::ProjectDef<T>> {
-        eval_nickel(project_path, None, NO_ARGS)
-    }
-    pub fn read_project_task(
-        &mut self,
-        project_path: &str,
-        task_path: &str,
-    ) -> anyhow::Result<(ProjectInfo, usize, crate::types::task::Task)> {
-        let proj: ProjectDef<TaskRef> = self
-            .read_project(project_path)
+    ) -> anyhow::Result<(crate::types::project::ProjectDef, ProjectHandle)> {
+        // ignore unset time definition
+        let proj: ProjectDef = eval_nickel(project_path, None, NO_ARGS, NO_ARGS)
             .context("failed to eval project definition")?;
-        let task: crate::types::task::Task = eval_nickel(task_path, Some("task"), NO_ARGS)
-            .context("failed to eval task definition")?;
-        let idx = proj
-            .tasks
-            .iter()
-            .enumerate()
-            .find(|(_, v)| v.id == task.id)
-            .context("task is not in project")?
-            .0;
-        Ok((proj.project, idx, task))
+
+        self.path_buf.clear();
+        self.path_buf.extend_from_slice(
+            std::path::Path::new(project_path)
+                .file_stem()
+                .map_or(project_path.as_bytes(), |p| p.as_encoded_bytes()),
+        );
+        self.path_buf.extend_from_slice(b".json\0");
+
+        let mut file = std::fs::File::from(
+            rustix::fs::open(
+                std::ffi::CStr::from_bytes_with_nul(&self.path_buf).unwrap(),
+                OFlags::CREATE | OFlags::RDWR | OFlags::CLOEXEC,
+                Mode::from_raw_mode(0o666),
+            )
+            .context("failed to open state file")?,
+        );
+        self.val_buf.clear();
+        file.read_to_end(&mut self.val_buf)
+            .context("failed to read state file")?;
+        let state = if self.val_buf.is_empty() {
+            Default::default()
+        } else {
+            serde_json::from_slice(&self.val_buf).context("failed to deserialize state json")?
+        };
+
+        Ok((proj, ProjectHandle { state, file }))
     }
 
-    pub fn start_task(&mut self, project: &str, task: &str) -> anyhow::Result<Started> {
-        let (project, idx, task) = self.read_project_task(project, task)?;
+    pub fn start_task(&mut self, task: &Task) -> anyhow::Result<Started> {
         if task.status != Status::Pending {
             anyhow::bail!("only pending task can be started");
         }
@@ -213,22 +245,18 @@ impl App {
             "task {id} started at {start_time} ({})",
             start_time.to_rfc3339()
         );
-        Ok(Started {
-            project,
-            index: idx,
-            task,
-            start_time,
-        })
+        Ok(Started { start_time })
     }
-    pub fn stop_task(
+    pub fn stop_task<'a>(
         &mut self,
-        project: &str,
-        task: &str,
-        done: bool,
-        stop_time: Option<DateTime<FixedOffset>>,
-        args: &[impl AsRef<OsStr>],
-    ) -> anyhow::Result<(usize, crate::types::time::TimeRecord)> {
-        let end_time = stop_time.unwrap_or_else(|| chrono::Local::now().fixed_offset());
+        project: &'a ProjectInfo,
+        task: &'a mut Task,
+        state: &mut ProjectHandle,
+        time_opt: StopTimeOpt<impl AsRef<OsStr>>,
+    ) -> anyhow::Result<crate::types::time::TimeRecord<&'a ProjectInfo, &'a Task>> {
+        let end_time = time_opt
+            .stop_time
+            .unwrap_or_else(|| chrono::Local::now().fixed_offset());
         println!("task stopped at {end_time} ({})", end_time.to_rfc3339());
         let start: StartedTask = read_json(
             Some(self.time_log_root.as_fd()),
@@ -238,60 +266,48 @@ impl App {
         .context("failed to read started task")?;
 
         #[derive(Deserialize)]
-        struct TimeDef {
-            task: crate::types::task::Task,
-            time: crate::types::time::TimeInfo,
+        struct TimeInfo {
+            #[serde(default)]
+            data: Option<TimeData>,
+            #[serde(default)]
+            external_tools: crate::types::time::ExternalTools,
         }
-        let project: crate::types::project::ProjectDef<TaskRef> = self
-            .read_project(project)
-            .context("failed to eval project definition")?;
-        let mut time_def: TimeDef =
-            eval_nickel(task, None, args).context("failed to eval time definition")?;
-        let idx = project
-            .tasks
-            .iter()
-            .enumerate()
-            .find(|(_, t)| t.id == time_def.task.id)
-            .context("can't find task in project")?
-            .0;
-
-        if done {
-            time_def.task.status = crate::types::task::Status::Completed;
-            time_def.task.completed = Some(end_time);
-
-            self.path_buf.clear();
-            self.path_buf.extend_from_slice(
-                std::path::Path::new(task)
-                    .file_stem()
-                    .map_or(task.as_bytes(), |p| p.as_encoded_bytes()),
-            );
-            self.path_buf.extend_from_slice(b".json\0");
-            write_json(
+        let time_def: TimeInfo = match time_opt.def_file {
+            Some(def) => eval_nickel(
+                def,
                 None,
-                std::ffi::CStr::from_bytes_with_nul(&self.path_buf).unwrap(),
-                WriteOptions {
-                    overwrite: true,
-                    create_dir: false,
-                    mode: Mode::RUSR | Mode::WUSR | Mode::RGRP | Mode::WGRP,
-                },
-                &mut self.val_buf,
-                &crate::types::task::TaskState {
-                    status: crate::types::task::Status::Completed,
-                    completed: Some(end_time),
-                },
+                &[
+                    &format!("info.task_index={}", time_opt.task_index),
+                    &format!("info.done={}", time_opt.done),
+                ],
+                time_opt.args,
             )
-            .context("failed to write completed json")?;
+            .context("failed to eval time definition")?,
+            None => TimeInfo {
+                data: None,
+                external_tools: Default::default(),
+            },
+        };
+
+        if time_opt.done {
+            let state = state.state.tasks.entry(task.id).or_default();
+
+            state.status = crate::types::task::Status::Completed;
+            state.completed = Some(end_time);
+
+            task.status = crate::types::task::Status::Completed;
+            task.completed = Some(end_time);
         }
 
         let ret = crate::types::time::TimeRecord {
             id: start.id,
             start_time: start.start_time,
             end_time,
-            project: project.project,
-            task: time_def.task,
-            done,
-            data: time_def.time.data,
-            external_tools: time_def.time.external_tools,
+            project,
+            task: &*task,
+            done: time_opt.done,
+            data: time_def.data,
+            external_tools: time_def.external_tools,
         };
 
         let _ = {
@@ -324,6 +340,6 @@ impl App {
         )
         .context("failed to remove started task file")?;
 
-        Ok((idx, ret))
+        Ok(ret)
     }
 }

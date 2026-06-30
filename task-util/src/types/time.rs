@@ -13,21 +13,22 @@ pub struct ExternalTools {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TimeInfo {
+pub struct TimeData {
+    pub type_name: String,
+    pub type_id: Uuid,
     #[serde(default)]
     pub data: serde_json::Value,
-    #[serde(default)]
-    pub external_tools: ExternalTools,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct TimeRecord {
+pub struct TimeRecord<P, T> {
     pub id: Uuid,
     pub start_time: DateTime<FixedOffset>,
     pub end_time: DateTime<FixedOffset>,
-    pub project: super::project::ProjectInfo,
-    pub task: super::task::Task,
+    pub project: P,
+    pub task: T,
     pub done: bool,
-    pub data: serde_json::Value,
+    pub data: Option<TimeData>,
+    #[serde(default)]
     pub external_tools: ExternalTools,
 }

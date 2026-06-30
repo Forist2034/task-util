@@ -109,7 +109,7 @@ impl Radicale {
                 self.root.as_fd(),
                 std::ffi::CStr::from_bytes_with_nul(self.path_buf.as_bytes()).unwrap(),
                 OFlags::CREATE | OFlags::TRUNC | OFlags::WRONLY | OFlags::CLOEXEC,
-                Mode::from_raw_mode(0o555),
+                Mode::from_raw_mode(0o666),
             )
             .context("failed to open project prop file")?,
         )
