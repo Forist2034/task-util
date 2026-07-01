@@ -38,6 +38,9 @@ enum Cmd {
         update: bool,
         project: String,
     },
+    ListTasks {
+        project: String,
+    },
     NewTask {
         name: String,
     },
@@ -257,6 +260,22 @@ fn main() -> anyhow::Result<()> {
                     .fixed_offset()
                     .to_rfc3339()
             );
+            Ok(())
+        }
+        Cmd::ListTasks { project } => {
+            let (proj, _) = native
+                .read_project(&project)
+                .context("failed to read project")?;
+            for (idx, t) in proj.tasks.iter().enumerate() {
+                println!(
+                    "{idx:>4} {} {}",
+                    match t.status {
+                        task_util::types::task::Status::Pending => " ",
+                        task_util::types::task::Status::Completed => "x",
+                    },
+                    t.name
+                );
+            }
             Ok(())
         }
         Cmd::AddTasks { update, project } => {
