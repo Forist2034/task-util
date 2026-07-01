@@ -125,6 +125,45 @@ fn write_json(
     file.write_all(buf).context("failed to write output file")
 }
 
+fn read_state_json<R: serde::de::DeserializeOwned>(
+    path: &str,
+    path_buf: &mut Vec<u8>,
+    buf: &mut Vec<u8>,
+) -> anyhow::Result<(R, std::fs::File)> {
+    path_buf.clear();
+    path_buf.extend_from_slice(
+        std::path::Path::new(path)
+            .file_stem()
+            .map_or(path.as_bytes(), |p| p.as_encoded_bytes()),
+    );
+    path_buf.extend_from_slice(b".json\0");
+
+    let mut file = std::fs::File::from(
+        rustix::fs::open(
+            std::ffi::CStr::from_bytes_with_nul(&path_buf).unwrap(),
+            OFlags::CREATE | OFlags::RDWR | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o666),
+        )
+        .context("failed to open file")?,
+    );
+    buf.clear();
+    file.read_to_end(buf).context("failed to read file")?;
+    let ret = serde_json::from_slice(buf).context("failed to deserialize json")?;
+    Ok((ret, file))
+}
+fn write_state_json(
+    file: &mut std::fs::File,
+    buf: &mut Vec<u8>,
+    val: &impl serde::Serialize,
+) -> anyhow::Result<()> {
+    buf.clear();
+    serde_json::to_writer_pretty(&mut *buf, val).unwrap();
+    file.seek(std::io::SeekFrom::Start(0))?;
+    file.write_all(&buf)?;
+    file.set_len(buf.len() as u64)?;
+    Ok(())
+}
+
 #[derive(Serialize, Deserialize)]
 struct StartedTask {
     id: Uuid,
@@ -149,12 +188,17 @@ pub struct ProjectHandle {
 }
 impl ProjectHandle {
     pub fn write(&mut self, app: &mut App) -> anyhow::Result<()> {
-        app.val_buf.clear();
-        let _ = serde_json::to_writer_pretty(&mut app.val_buf, &self.state);
-        self.file.set_len(0)?;
-        self.file.seek(std::io::SeekFrom::Start(0))?;
-        self.file.write_all(&app.val_buf)?;
-        Ok(())
+        write_state_json(&mut self.file, &mut app.val_buf, &self.state)
+    }
+}
+
+pub struct TagsHandle {
+    pub state: crate::types::tag::TagsState,
+    file: std::fs::File,
+}
+impl TagsHandle {
+    pub fn write(&mut self, app: &mut App) -> anyhow::Result<()> {
+        write_state_json(&mut self.file, &mut app.val_buf, &self.state)
     }
 }
 
@@ -194,32 +238,21 @@ impl App {
         let proj: ProjectDef = eval_nickel(project_path, None, NO_ARGS, NO_ARGS)
             .context("failed to eval project definition")?;
 
-        self.path_buf.clear();
-        self.path_buf.extend_from_slice(
-            std::path::Path::new(project_path)
-                .file_stem()
-                .map_or(project_path.as_bytes(), |p| p.as_encoded_bytes()),
-        );
-        self.path_buf.extend_from_slice(b".json\0");
-
-        let mut file = std::fs::File::from(
-            rustix::fs::open(
-                std::ffi::CStr::from_bytes_with_nul(&self.path_buf).unwrap(),
-                OFlags::CREATE | OFlags::RDWR | OFlags::CLOEXEC,
-                Mode::from_raw_mode(0o666),
-            )
-            .context("failed to open state file")?,
-        );
-        self.val_buf.clear();
-        file.read_to_end(&mut self.val_buf)
-            .context("failed to read state file")?;
-        let state = if self.val_buf.is_empty() {
-            Default::default()
-        } else {
-            serde_json::from_slice(&self.val_buf).context("failed to deserialize state json")?
-        };
+        let (state, file) = read_state_json(project_path, &mut self.path_buf, &mut self.val_buf)
+            .context("failed to read project state")?;
 
         Ok((proj, ProjectHandle { state, file }))
+    }
+    pub fn read_tags(
+        &mut self,
+        tags_path: &str,
+    ) -> anyhow::Result<(Vec<crate::types::tag::TagInfo>, TagsHandle)> {
+        let ret = eval_nickel(tags_path, Some("all_tags"), NO_ARGS, NO_ARGS)
+            .context("failed to eval tags definition")?;
+
+        let (state, file) = read_state_json(tags_path, &mut self.path_buf, &mut self.val_buf)
+            .context("failed to read tags state")?;
+        Ok((ret, TagsHandle { state, file }))
     }
 
     pub fn start_task(&mut self, task: &Task) -> anyhow::Result<Started> {

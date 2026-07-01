@@ -7,6 +7,7 @@ pub mod types {
 pub mod ext_tools {
     mod ical;
     pub mod radicale;
+    pub mod super_productivity;
     pub mod taskwarrior;
     pub mod timewarrior;
 }

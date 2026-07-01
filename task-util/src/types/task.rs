@@ -2,6 +2,12 @@ use chrono::{DateTime, FixedOffset};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SuperProductivity {
+    #[serde(default)]
+    pub id: Option<String>,
+}
+
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Timewarrior {
     pub extra_tags: Vec<String>,
@@ -9,6 +15,8 @@ pub struct Timewarrior {
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct ExternalTools {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub super_productivity: Option<SuperProductivity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timewarrior: Option<Timewarrior>,
 }
@@ -21,11 +29,23 @@ pub enum Status {
     Completed,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuperProductivityState {
+    pub id: String,
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ExternalState {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub super_productivity: Option<SuperProductivityState>,
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TaskState {
     pub status: Status,
     #[serde(default)]
     pub completed: Option<DateTime<FixedOffset>>,
+    #[serde(default)]
+    pub external_tools: ExternalState,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

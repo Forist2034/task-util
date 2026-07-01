@@ -11,11 +11,15 @@ enum Cmd {
         update: bool,
         project: String,
     },
-    AddTask {
+    AddTags {
+        #[arg(long)]
+        update: bool,
+        tags: String,
+    },
+    AddTasks {
         #[arg(long)]
         update: bool,
         project: String,
-        task: usize,
     },
     Start {
         project: String,
@@ -61,12 +65,16 @@ fn main() -> anyhow::Result<()> {
     let cfg: Config =
         serde_json::from_slice(&std::fs::read(&cli.config).context("failed to read config file")?)
             .context("failed to parse config file")?;
+    let rt = tokio::runtime::Runtime::new().context("failed to create tokio runtime")?;
     let mut native = task_util::native::App::new(cfg_root.as_fd(), &cfg.native)
         .context("failed to init native app")?;
     let mut taskw = task_util::ext_tools::taskwarrior::Taskwarrior::new();
     let mut radicale =
         task_util::ext_tools::radicale::Radicale::new(cfg_root.as_fd(), &cfg.radicale)
             .context("failed to init radicale")?;
+    let mut super_productivity =
+        task_util::ext_tools::super_productivity::SuperProductivity::new(rt.handle().clone())
+            .context("failed to init super-productivity")?;
     match cli.cmd {
         Cmd::Start { project, task } => {
             let (proj, _state) = native
@@ -77,6 +85,9 @@ fn main() -> anyhow::Result<()> {
             taskw
                 .start_task(&proj.project, task, started.start_time)
                 .context("failed to start task for taskwarrior")?;
+            super_productivity
+                .start_task(&task, started.start_time)
+                .context("failed to start task for super-productivity")?;
             Ok(())
         }
         Cmd::Stop {
@@ -123,14 +134,20 @@ fn main() -> anyhow::Result<()> {
                 radicale
                     .write_task(task_idx, rec.project, rec.task)
                     .context("failed to update radicale task")?;
+                super_productivity
+                    .finish_task(rec.task, rec.end_time)
+                    .context("failed to finish super-productivity task")?;
             } else {
                 taskw
                     .stop_task(rec.project, rec.task)
                     .context("failed to stop taskwarrior task")?;
+                super_productivity
+                    .stop_task(rec.task)
+                    .context("failed to stop super-productivity task")?;
             }
             Ok(())
         }
-        Cmd::AddProject { update: _, project } => {
+        Cmd::AddProject { update, project } => {
             let (proj, mut state) = native
                 .read_project(&project)
                 .context("failed to read project")?;
@@ -140,23 +157,37 @@ fn main() -> anyhow::Result<()> {
             radicale
                 .write_project(&proj)
                 .context("failed to write project to radicale")?;
+            super_productivity
+                .add_project(update, &proj.project, &mut state)
+                .context("failed to add project to super-productivity")?;
             state.write(&mut native).context("failed to save state")
         }
-        Cmd::AddTask {
-            update: _,
-            project,
-            task: task_idx,
-        } => {
+        Cmd::AddTags { update, tags } => {
+            let (tags, mut state) = native.read_tags(&tags).context("failed to read tags")?;
+            for t in tags.iter() {
+                super_productivity
+                    .add_tag(update, t, &mut state)
+                    .with_context(|| format!("failed to add tag {} to super-productivity", t.id))?;
+            }
+            state
+                .write(&mut native)
+                .context("failed to save tags state")
+        }
+        Cmd::AddTasks { update, project } => {
             let (proj, mut state) = native
                 .read_project(&project)
                 .context("failed to read project task")?;
-            let task = proj.tasks.get(task_idx).context("invalid task index")?;
             taskw
-                .add_tasks(&proj.project, std::slice::from_ref(task))
+                .add_tasks(&proj.project, &proj.tasks)
                 .context("failed to add project task to taskwarrior")?;
-            radicale
-                .write_task(task_idx, &proj.project, task)
-                .context("failed to write task to radicale")?;
+            for (idx, task) in proj.tasks.iter().enumerate() {
+                radicale
+                    .write_task(idx, &proj.project, task)
+                    .context("failed to write task to radicale")?;
+                super_productivity
+                    .add_task(update, &proj.project, task, &mut state)
+                    .with_context(|| format!("failed to add task {idx} to super-productivity"))?;
+            }
             state.write(&mut native).context("failed to save state")
         }
     }
