@@ -198,9 +198,6 @@ fn main() -> anyhow::Result<()> {
             let (proj, mut state) = native
                 .read_project(&project)
                 .context("failed to read project")?;
-            taskw
-                .add_tasks(&proj.project, &proj.tasks)
-                .context("failed to add tasks to taskwarrior")?;
             radicale
                 .write_project(&proj)
                 .context("failed to write project to radicale")?;
