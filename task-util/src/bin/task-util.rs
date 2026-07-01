@@ -6,10 +6,27 @@ use rustix::fs::{Mode, OFlags};
 
 #[derive(clap::Subcommand)]
 enum Cmd {
+    InitProject {
+        #[arg(long)]
+        root: String,
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        color: String,
+        output: String,
+    },
     AddProject {
         #[arg(long)]
         update: bool,
         project: String,
+    },
+    InitTags {
+        output: String,
+    },
+    NewTag {
+        #[arg(long)]
+        color: String,
+        name: String,
     },
     AddTags {
         #[arg(long)]
@@ -20,6 +37,9 @@ enum Cmd {
         #[arg(long)]
         update: bool,
         project: String,
+    },
+    NewTask {
+        name: String,
     },
     Start {
         project: String,
@@ -147,6 +167,33 @@ fn main() -> anyhow::Result<()> {
             }
             Ok(())
         }
+        Cmd::InitProject {
+            root,
+            name,
+            color,
+            output,
+        } => {
+            let mut path = std::path::PathBuf::from(&output);
+
+            path.set_extension("ncl");
+            std::fs::write(
+                &path,
+                format!(
+                    include_str!("./templates/project.ncl"),
+                    file = &output,
+                    id = uuid::Uuid::new_v4(),
+                    root = root.escape_debug(),
+                    name = name.escape_debug(),
+                    created = chrono::Local::now().fixed_offset().to_rfc3339(),
+                    color = &color
+                ),
+            )
+            .context("failed to write project def file")?;
+
+            path.set_extension("json");
+            std::fs::write(&path, r#"{"project":{},"tasks":{}}"#)
+                .context("failed to write json file")
+        }
         Cmd::AddProject { update, project } => {
             let (proj, mut state) = native
                 .read_project(&project)
@@ -162,6 +209,19 @@ fn main() -> anyhow::Result<()> {
                 .context("failed to add project to super-productivity")?;
             state.write(&mut native).context("failed to save state")
         }
+        Cmd::InitTags { output } => {
+            let mut path = std::path::PathBuf::from(&output);
+
+            path.set_extension("ncl");
+            std::fs::write(
+                &path,
+                format!(include_str!("./templates/tags.ncl"), file = &output),
+            )
+            .context("failed to write tags def file")?;
+
+            path.set_extension("json");
+            std::fs::write(&path, "{}").context("failed to write tags state file")
+        }
         Cmd::AddTags { update, tags } => {
             let (tags, mut state) = native.read_tags(&tags).context("failed to read tags")?;
             for t in tags.iter() {
@@ -172,6 +232,35 @@ fn main() -> anyhow::Result<()> {
             state
                 .write(&mut native)
                 .context("failed to save tags state")
+        }
+        Cmd::NewTag { color, name } => {
+            println!(
+                include_str!("./templates/tag.ncl"),
+                id = uuid::Uuid::new_v4(),
+                name = name.escape_debug(),
+                created = chrono::Local::now().fixed_offset().to_rfc3339(),
+                color = &color
+            );
+            Ok(())
+        }
+        Cmd::NewTask { name } => {
+            let ts = std::time::SystemTime::now();
+            let dur = ts
+                .duration_since(std::time::SystemTime::UNIX_EPOCH)
+                .unwrap();
+            println!(
+                include_str!("./templates/task.ncl"),
+                id = uuid::Uuid::new_v7(uuid::Timestamp::from_unix(
+                    uuid::NoContext,
+                    dur.as_secs(),
+                    dur.subsec_nanos()
+                )),
+                name = name.escape_debug(),
+                created = chrono::DateTime::<chrono::Local>::from(ts)
+                    .fixed_offset()
+                    .to_rfc3339()
+            );
+            Ok(())
         }
         Cmd::AddTasks { update, project } => {
             let (proj, mut state) = native
