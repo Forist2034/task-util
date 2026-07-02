@@ -63,7 +63,7 @@ enum Cmd {
 }
 #[derive(clap::Parser)]
 struct Cli {
-    #[arg(long)]
+    #[arg(long, env = "TASK_UTIL_CONFIG")]
     config: String,
     #[command(subcommand)]
     cmd: Cmd,
