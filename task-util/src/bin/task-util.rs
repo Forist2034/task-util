@@ -12,7 +12,7 @@ enum Cmd {
         #[arg(long)]
         name: String,
         #[arg(long)]
-        color: String,
+        color: Option<String>,
         output: String,
     },
     AddProject {
@@ -25,7 +25,7 @@ enum Cmd {
     },
     NewTag {
         #[arg(long)]
-        color: String,
+        color: Option<String>,
         name: String,
     },
     AddTags {
@@ -73,6 +73,15 @@ struct Cli {
 struct Config {
     native: task_util::native::Config,
     radicale: task_util::ext_tools::radicale::Config,
+}
+
+fn random_color() -> String {
+    // const COLORS: &[&str] = &[
+    //     "#c42d78", "#e23d3d", "#ff8a2a", "#f5c400", "#9cab3a", "#70c741", "#27983a", "#55cbb0",
+    //     "#1492b2", "#139ef7", "#7fb9e8", "#3c6dff", "#7b44e6", "#a02adb", "#d89ae8", "#d6458d",
+    //     "#f77c70", "#666666", "#a0a0a0", "#b99780"
+    // ];
+    random_color::RandomColor::new().to_hex()
 }
 
 fn main() -> anyhow::Result<()> {
@@ -188,7 +197,7 @@ fn main() -> anyhow::Result<()> {
                     root = root.escape_debug(),
                     name = name.escape_debug(),
                     created = chrono::Local::now().fixed_offset().to_rfc3339(),
-                    color = &color
+                    color = color.unwrap_or_else(random_color)
                 ),
             )
             .context("failed to write project def file")?;
@@ -239,7 +248,7 @@ fn main() -> anyhow::Result<()> {
                 id = uuid::Uuid::new_v4(),
                 name = name.escape_debug(),
                 created = chrono::Local::now().fixed_offset().to_rfc3339(),
-                color = &color
+                color = color.unwrap_or_else(random_color)
             );
             Ok(())
         }
