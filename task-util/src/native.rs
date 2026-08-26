@@ -375,4 +375,19 @@ impl App {
 
         Ok(ret)
     }
+    pub fn set_task_complete(
+        &mut self,
+        task: &mut Task,
+        state: &mut ProjectHandle,
+        stop_time: DateTime<FixedOffset>,
+    ) -> anyhow::Result<()> {
+        let state = state.state.tasks.entry(task.id).or_default();
+        state.status = crate::types::task::Status::Completed;
+        state.completed = Some(stop_time);
+
+        task.status = crate::types::task::Status::Completed;
+        task.completed = Some(stop_time);
+
+        Ok(())
+    }
 }

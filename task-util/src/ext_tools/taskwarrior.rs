@@ -141,4 +141,11 @@ impl Taskwarrior {
     ) -> anyhow::Result<()> {
         self.import_task(&[to_task(0, project, t, None)])
     }
+    pub fn set_task_complete(
+        &mut self,
+        project: &crate::types::project::ProjectInfo,
+        t: &crate::types::task::Task,
+    ) -> anyhow::Result<()> {
+        self.import_task(&[to_task(0, project, t, None)])
+    }
 }

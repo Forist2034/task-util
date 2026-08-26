@@ -60,6 +60,12 @@ enum Cmd {
         #[arg(last = true)]
         params: Vec<String>,
     },
+    SetComplete {
+        #[arg(long)]
+        stop_time: Option<String>,
+        project: String,
+        task: usize,
+    },
 }
 #[derive(clap::Parser)]
 struct Cli {
@@ -177,6 +183,38 @@ fn main() -> anyhow::Result<()> {
                     .stop_task(rec.task)
                     .context("failed to stop super-productivity task")?;
             }
+            Ok(())
+        }
+        Cmd::SetComplete {
+            stop_time,
+            project,
+            task: task_idx,
+        } => {
+            let (mut proj, mut state) = native
+                .read_project(&project)
+                .context("failed to read project")?;
+            let task = proj.tasks.get_mut(task_idx).context("invalid task index")?;
+
+            let stop_time = match stop_time {
+                Some(t) => chrono::DateTime::parse_from_rfc3339(&t).context("invalid stop time")?,
+                None => chrono::Local::now().fixed_offset(),
+            };
+
+            native.set_task_complete(task, &mut state, stop_time)?;
+            state
+                .write(&mut native)
+                .context("failed to write project state")?;
+
+            taskw
+                .set_task_complete(&proj.project, task)
+                .context("failed to complete taskwarrior task")?;
+            radicale
+                .write_task(task_idx, &proj.project, task)
+                .context("failed to update radicale task")?;
+            super_productivity
+                .set_task_complete(task, stop_time)
+                .context("failed to set super-productivity task complete")?;
+
             Ok(())
         }
         Cmd::InitProject {

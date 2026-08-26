@@ -495,4 +495,14 @@ impl SuperProductivity {
             completed_time: stop_time.into(),
         })
     }
+    pub fn set_task_complete(
+        &mut self,
+        task: &crate::types::task::Task,
+        stop_time: chrono::DateTime<chrono::FixedOffset>,
+    ) -> anyhow::Result<()> {
+        self.call_ipc(&IpcReq::FinishTask {
+            id: get_task_id(task)?,
+            completed_time: stop_time.into(),
+        })
+    }
 }
