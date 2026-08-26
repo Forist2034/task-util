@@ -124,7 +124,7 @@ fn main() -> anyhow::Result<()> {
                 .start_task(&proj.project, task, started.start_time)
                 .context("failed to start task for taskwarrior")?;
             super_productivity
-                .start_task(&task, started.start_time)
+                .start_task(task, started.start_time)
                 .context("failed to start task for super-productivity")?;
             Ok(())
         }
@@ -146,7 +146,7 @@ fn main() -> anyhow::Result<()> {
                     task,
                     &mut state,
                     task_util::native::StopTimeOpt {
-                        def_file: time_data.as_ref().map(String::as_str),
+                        def_file: time_data.as_deref(),
                         args: &params,
                         done,
                         task_index: task_idx,

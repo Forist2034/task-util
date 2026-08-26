@@ -59,7 +59,7 @@ impl Radicale {
         task: &crate::types::task::Task,
     ) -> anyhow::Result<()> {
         self.ical_buf.clear();
-        self.ical_buf.from_task(idx, task);
+        self.ical_buf.add_task(idx, task);
         let val = self.ical_buf.finish();
 
         self.path_buf.clear();

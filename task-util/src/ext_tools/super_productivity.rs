@@ -121,7 +121,7 @@ impl<'a> SpTask<'a> {
     ) -> anyhow::Result<Self> {
         Ok(Self {
             title: &task.name,
-            notes: task.description.as_ref().map(String::as_str),
+            notes: task.description.as_deref(),
             is_done: task.status == crate::types::task::Status::Completed,
             project_id: match &project.external_tools.super_productivity {
                 Some(crate::types::project::SuperProductivity { id: Some(i), .. }) => i.as_str(),
@@ -181,7 +181,7 @@ enum IpcReq<'a> {
     },
 }
 
-fn get_task_id<'a>(task: &'a crate::types::task::Task) -> anyhow::Result<&'a str> {
+fn get_task_id(task: &crate::types::task::Task) -> anyhow::Result<&str> {
     match &task.external_tools.super_productivity {
         Some(crate::types::task::SuperProductivity { id: Some(tid) }) => Ok(tid.as_str()),
         _ => anyhow::bail!("task is not added to super-productivity"),

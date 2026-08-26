@@ -149,3 +149,8 @@ impl Taskwarrior {
         self.import_task(&[to_task(0, project, t, None)])
     }
 }
+impl Default for Taskwarrior {
+    fn default() -> Self {
+        Self::new()
+    }
+}

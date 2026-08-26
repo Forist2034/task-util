@@ -140,7 +140,7 @@ fn read_state_json<R: serde::de::DeserializeOwned>(
 
     let mut file = std::fs::File::from(
         rustix::fs::open(
-            std::ffi::CStr::from_bytes_with_nul(&path_buf).unwrap(),
+            std::ffi::CStr::from_bytes_with_nul(path_buf).unwrap(),
             OFlags::CREATE | OFlags::RDWR | OFlags::CLOEXEC,
             Mode::from_raw_mode(0o666),
         )
@@ -159,7 +159,7 @@ fn write_state_json(
     buf.clear();
     serde_json::to_writer_pretty(&mut *buf, val).unwrap();
     file.seek(std::io::SeekFrom::Start(0))?;
-    file.write_all(&buf)?;
+    file.write_all(buf)?;
     file.set_len(buf.len() as u64)?;
     Ok(())
 }

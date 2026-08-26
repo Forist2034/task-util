@@ -87,7 +87,7 @@ impl ICalTodoBuilder {
         }
         self.line_buf.clear();
     }
-    pub fn from_task(&mut self, idx: usize, task: &crate::types::task::Task) {
+    pub fn add_task(&mut self, idx: usize, task: &crate::types::task::Task) {
         if let Some((head, tail)) = task.tags.split_first() {
             self.line_buf.push_str("CATEGORIES:");
             let _ = head.name.write_ical(&mut self.line_buf);
