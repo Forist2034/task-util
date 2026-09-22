@@ -79,6 +79,7 @@ struct Cli {
 struct Config {
     native: task_util::native::Config,
     radicale: task_util::ext_tools::radicale::Config,
+    super_productivity: task_util::ext_tools::super_productivity::Config,
 }
 
 fn random_color() -> String {
@@ -110,9 +111,11 @@ fn main() -> anyhow::Result<()> {
     let mut radicale =
         task_util::ext_tools::radicale::Radicale::new(cfg_root.as_fd(), &cfg.radicale)
             .context("failed to init radicale")?;
-    let mut super_productivity =
-        task_util::ext_tools::super_productivity::SuperProductivity::new(rt.handle().clone())
-            .context("failed to init super-productivity")?;
+    let mut super_productivity = task_util::ext_tools::super_productivity::SuperProductivity::new(
+        rt.handle().clone(),
+        &cfg.super_productivity,
+    )
+    .context("failed to init super-productivity")?;
     match cli.cmd {
         Cmd::Start { project, task } => {
             let (proj, _state) = native

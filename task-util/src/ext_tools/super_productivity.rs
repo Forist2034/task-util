@@ -188,8 +188,14 @@ fn get_task_id(task: &crate::types::task::Task) -> anyhow::Result<&str> {
     }
 }
 
+#[derive(serde::Deserialize)]
+pub struct Config {
+    api_token: String,
+}
+
 pub struct SuperProductivity {
     rt: tokio::runtime::Handle,
+    api_token: http::header::HeaderValue,
     ipc_req: OwnedFd,
     ipc_resp: OwnedFd,
     pid: rustix::process::Pid,
@@ -197,7 +203,7 @@ pub struct SuperProductivity {
     body_buf: Vec<u8>,
 }
 impl SuperProductivity {
-    pub fn new(rt: tokio::runtime::Handle) -> anyhow::Result<Self> {
+    pub fn new(rt: tokio::runtime::Handle, cfg: &Config) -> anyhow::Result<Self> {
         let mut ipc_path = std::env::var_os("XDG_DATA_HOME")
             .map(std::path::PathBuf::from)
             .or_else(|| {
@@ -230,6 +236,8 @@ impl SuperProductivity {
         .context("failed to open ipc response dir")?;
 
         Ok(Self {
+            api_token: http::HeaderValue::from_maybe_shared(format!("Bearer {}", cfg.api_token))
+                .context("invalid api token")?,
             ipc_req,
             ipc_resp,
             rt,
@@ -268,6 +276,7 @@ impl SuperProductivity {
                             http::header::HOST,
                             const { http::header::HeaderValue::from_static("127.0.0.1:3876") },
                         )
+                        .header(http::header::AUTHORIZATION, self.api_token.clone())
                         .body(body)
                         .unwrap(),
                 ),
